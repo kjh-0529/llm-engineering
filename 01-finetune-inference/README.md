@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data and evaluation fixed after an audit (see below); baseline to be re-measured on the new split, then QLoRA fine-tuning.
+Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning next.
 
 ## Choices
 
@@ -53,13 +53,12 @@ A CPU smoke test with Qwen3-0.6B on two HPC questions ran end to end. It answere
 ## Baseline: Qwen3-1.7B as it is
 
 Tesla T4, float16, greedy decoding. Summaries in [`results/`](results/).
-
-> These numbers come from the first data split and the first version of the Korean metric, before both were fixed (see the data section and the metric table). They are kept for the record and will be replaced by a re-run on the new split. The qualitative findings below do not depend on either fix.
+Measured on the current split with the fixed metric. Korean metrics count only items whose reference is Korean (178 of 200 test, 28 of 30 HPC).
 
 | Set | Korean answers | Korean ratio | CJK drift | chrF | Code OK | Mean length | Tokens/s |
 |---|---|---|---|---|---|---|---|
-| Test (200 technical) | 85.0% | 0.81 | 0% | 21.7 | 82.5% (of 63) | 285 chars | 102 |
-| HPC (30) | 96.7% | 0.82 | 0% | 18.2 | — | 360 chars | 106 |
+| Test (200 technical) | 84.8% (of 178) | 0.80 | 0% | 22.2 | 76.9% (of 65) | 302 chars | 90 |
+| HPC (30) | 100% (of 28) | 0.85 | 0% | 18.2 | — | 360 chars | 104 |
 
 The numbers look good; the answers do not. On the first five HPC questions:
 
@@ -73,7 +72,7 @@ The numbers look good; the answers do not. On the first five HPC questions:
 
 What this means for the plan:
 
-- **Language is not the problem.** No Chinese or Japanese drift, and 85–97% of answers are in Korean. Most of the "15% non-Korean" turned out to be a metric bug, not a language problem: 24 of the 200 old test references are code only (e.g. a single SQL query), and a correct code-only answer scored 0 on the Korean metric. The metric now skips such items.
+- **Language is mostly fine, with one real gap.** No Chinese or Japanese drift, and every HPC answer is in Korean. On the test set, 15% of answers to questions with a Korean reference are still mostly not Korean. I first suspected a metric bug, since a correct code-only answer used to score 0; the metric was fixed to skip code-only references, the baseline was re-run, and the 15% stayed (85.0% → 84.8%). So the gap is real, and closing it is a concrete goal for fine-tuning.
 - **Facts are.** The model confidently invents Slurm commands. The training data is general technical Q&A and contains almost nothing about Slurm or MPI, so **fine-tuning is not expected to fix HPC facts**; it should mainly improve Korean consistency, answer format and fit to the reference style (chrF). Written down before training, so the result can be checked against it.
 - That gap is exactly what retrieval is for: project 2 (RAG over HPC documentation) is the fix for wrong facts, and this baseline is the evidence for needing it.
 - chrF alone would have hidden all of this: a fluent wrong answer and a fluent right one score about the same. Every comparison below keeps a sample of answers next to the numbers.

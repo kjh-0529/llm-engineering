@@ -5,11 +5,12 @@
  "device": "Tesla T4",
  "data": "test.jsonl",
  "n": 200,
- "korean_ratio_mean": 0.8085,
- "korean_answers_pct": 85.0,
- "chrf_mean": 21.73,
- "code_ok_pct": 82.5,
- "code_cases": 63,
- "mean_chars": 285,
- "gen_tokens_per_s": 102.4
+ "korean_cases": 178,
+ "korean_ratio_mean": 0.8042,
+ "korean_answers_pct": 84.8,
+ "chrf_mean": 22.15,
+ "code_ok_pct": 76.9,
+ "code_cases": 65,
+ "mean_chars": 302,
+ "gen_tokens_per_s": 90.3
 }
