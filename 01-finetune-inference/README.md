@@ -110,7 +110,8 @@ pip install -r requirements.txt
 python data/prepare_data.py            # optional: the splits are already committed
 python eval/evaluate.py --model Qwen/Qwen3-1.7B --data data/test.jsonl --out results/base_test
 python eval/evaluate.py --model Qwen/Qwen3-1.7B --data data/hpc_eval_ko.jsonl --out results/base_hpc
-python train_qlora.py                  # writes the adapter to runs/qlora
+pip install bitsandbytes                # not preinstalled on Kaggle
+python train_qlora.py                   # writes the adapter to runs/qlora
 python eval/evaluate.py --adapter runs/qlora --data data/test.jsonl --out results/qlora_test
 python eval/evaluate.py --adapter runs/qlora --data data/hpc_eval_ko.jsonl --out results/qlora_hpc
 ```

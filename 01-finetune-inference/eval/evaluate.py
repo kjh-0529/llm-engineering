@@ -51,6 +51,9 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype,
                                                  device_map="cuda" if use_cuda else None)
     if args.adapter:
+        # Without this, PEFT treats a missing local path as a Hub repo id and fails with an auth error.
+        if not os.path.isfile(os.path.join(args.adapter, "adapter_config.json")):
+            sys.exit(f"no adapter at {args.adapter}: did train_qlora.py finish?")
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, args.adapter)
     model.eval()
