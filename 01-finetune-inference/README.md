@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done, evaluated and [published](https://huggingface.co/kjh0529/qwen3-1.7b-ko-tech-qlora); inference optimization measured on the T4 (vLLM next).
+Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done, evaluated and [published](https://huggingface.co/kjh0529/qwen3-1.7b-ko-tech-qlora); inference optimization measured on the T4, including vLLM.
 
 ## Choices
 
@@ -217,13 +217,44 @@ Predictions, written before measuring:
 - **All at once** should give the highest throughput, several times Hugging Face batch 16.
 - Quality should match the Hugging Face float16 run up to small differences from different kernels.
 
+#### vLLM results
+
+Same T4, merged float16 model. Raw values: [`results/vllm_t4.csv`](results/vllm_t4.csv).
+
+| Setting | Hugging Face `generate` | vLLM | Speed-up |
+|---|---|---|---|
+| 200 requests, all at once | — | **903.3 tokens/s** (48 s in total) | 7.3x over HF batch 16 |
+| 16 at a time | 123.8 tokens/s (batch 16) | 463.4 tokens/s | **3.7x** |
+| One at a time (20 questions) | 21.4 tokens/s, 11.7 s per answer | 37.2 tokens/s, 6.5 s per answer | **1.7x** |
+| One at a time, no CUDA graphs | — | 29.4 tokens/s, 8.2 s per answer | 1.4x |
+
+Quality is unchanged: chrF 27.9–28.0 at batch 16 and above, the same as Hugging Face float16 (28.0); Korean answers 93.3%; 14–16% of answers still hit the 512-token limit.
+
+Checked against the predictions:
+
+| Prediction | Result | |
+|---|---|---|
+| One at a time: 3x or more | **1.7x** | wrong: overestimated |
+| Without CUDA graphs, much of that gain disappears | graphs give +27% (29.4 → 37.2); about half of the gain over HF | partly right |
+| 16 at a time: a clear gain from continuous batching | 3.7x | right, and larger than expected |
+| All at once: several times HF batch 16 | 7.3x | right |
+| Same quality | same | right |
+
+What it shows:
+
+- **For serving many requests, the engine matters more than anything else measured here.** At the same concurrency of 16, vLLM is 3.7x faster than Hugging Face batching. In static batches every sequence waits for the longest answer in its batch, and with 14% of answers running to 512 tokens that wait is long; vLLM refills each finished slot with the next request at once. With all 200 requests in flight it reaches 903 tokens/s.
+- **Single requests improved much less than I predicted.** At 37.2 tokens/s one token takes 27 ms. Reading the 3.4 GB of weights once takes about 15 ms at the 232 GB/s a copy reaches on this card, so roughly 12 ms per token is still spent outside reading weights: scheduling, sampling and attention, among others. CUDA graphs remove part of the launch overhead (+27%), but not most of it. I did not profile vLLM, so the split of those 12 ms is an estimate, not a measurement.
+- **Overall on the T4, from the starting point to the best setup:** single requests 11.9 → 37.2 tokens/s (unmerged adapter → vLLM, 3.1x); throughput 79.1 → 903 tokens/s (11.4x).
+
+**Updated recommendation:** serve the merged float16 model with vLLM; for one-off scripts without a server, merged float16 with Hugging Face is the simple choice, and 4-bit when memory is tight.
+
 ## Plan
 
 1. ~~Data and evaluation~~
 2. ~~Baseline: score Qwen3-1.7B as it is~~
 3. ~~QLoRA fine-tuning (4-bit base, float16 compute on the T4)~~
 4. ~~Before/after comparison, with failure analysis~~
-5. Inference optimization: ~~float16 vs 8-bit vs 4-bit with Hugging Face generate~~; vLLM next
+5. ~~Inference optimization: float16 vs 8-bit vs 4-bit, Hugging Face generate vs vLLM~~
 6. Model card: [`MODEL_CARD.md`](MODEL_CARD.md), uploaded with [`upload_adapter.py`](upload_adapter.py)
 
 ## Run

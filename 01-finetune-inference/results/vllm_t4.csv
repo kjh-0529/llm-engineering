@@ -1,0 +1,5 @@
+run,max_num_seqs,sequential,eager,gen_tokens_per_s,sec_per_answer,truncated_pct,korean_answers_pct,chrf_mean,code_ok_pct
+vllm_all,256,False,False,903.3,0.24,14.0,93.3,28.01,81.5
+vllm_b16,16,False,False,463.4,0.48,15.5,93.3,27.94,81.5
+vllm_lat,256,True,False,37.2,6.47,15.0,93.8,34.77,100.0
+vllm_lat_eager,256,True,True,29.4,8.24,15.0,93.8,34.66,100.0
