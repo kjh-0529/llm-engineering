@@ -199,6 +199,24 @@ What it shows:
 
 **Recommendation for this model on a T4:** serve the merged float16 model when memory allows (it uses under 5 GB of the 16 GB); use 4-bit when memory is tight, for 14–26% less speed and no measured quality loss; avoid 8-bit.
 
+### vLLM
+
+[`vllm_bench.py`](vllm_bench.py) serves the merged float16 model with vLLM, using the same prompts, greedy decoding, token limit and metrics as `evaluate.py`. vLLM schedules requests continuously (a finished answer frees its slot for the next request at once), keeps the attention cache in fixed-size pages, and by default replays each decoding step as a captured CUDA graph instead of launching its kernels one by one.
+
+| Run | Compared with |
+|---|---|
+| All 200 requests at once | Hugging Face batch 16 (123.8 tokens/s) |
+| At most 16 at a time (`--max-num-seqs 16`) | the same concurrency as Hugging Face batch 16 |
+| One request at a time, 20 questions | Hugging Face batch 1 (21.4 tokens/s) |
+| One at a time without CUDA graphs (`--eager`) | isolates what CUDA graphs add |
+
+Predictions, written before measuring:
+
+- **One at a time** should be the largest gain. The Hugging Face batch-1 run used only about a quarter of the T4's memory bandwidth because of per-token overhead; CUDA graphs remove most of it. The ceiling is reading 3.4 GB of weights per token at 320 GB/s, about 90 tokens/s, so 3x or more over 21.4 tokens/s is plausible. Without CUDA graphs much of the gain should disappear.
+- **At 16 at a time**, continuous batching should beat static batches, where finished answers sit idle until the slowest one in the batch ends: a clear gain, smaller than for single requests.
+- **All at once** should give the highest throughput, several times Hugging Face batch 16.
+- Quality should match the Hugging Face float16 run up to small differences from different kernels.
+
 ## Plan
 
 1. ~~Data and evaluation~~
