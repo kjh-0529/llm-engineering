@@ -39,6 +39,8 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--max-new-tokens", type=int, default=512)
+    ap.add_argument("--quant", choices=["none", "8bit", "4bit"], default="none",
+                    help="bitsandbytes weight quantization (GPU only)")
     args = ap.parse_args()
 
     use_cuda = torch.cuda.is_available()
@@ -48,7 +50,13 @@ def main():
     tok.padding_side = "left"  # decoder-only batching
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype,
+    quant = None
+    if args.quant != "none":
+        from transformers import BitsAndBytesConfig
+        quant = (BitsAndBytesConfig(load_in_8bit=True) if args.quant == "8bit" else
+                 BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                                    bnb_4bit_compute_dtype=torch.float16))
+    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype, quantization_config=quant,
                                                  device_map="cuda" if use_cuda else None)
     if args.adapter:
         # Without this, PEFT treats a missing local path as a Hub repo id and fails with an auth error.
@@ -63,14 +71,20 @@ def main():
         items = items[: args.limit]
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-    rows, gen_tokens, t0 = [], 0, time.perf_counter()
+    sync = torch.cuda.synchronize if use_cuda else (lambda: None)
+    weights_gb = torch.cuda.memory_allocated() / 1e9 if use_cuda else 0.0
+    rows, gen_tokens, gen_time = [], 0, 0.0
     for i in range(0, len(items), args.batch_size):
         batch = items[i: i + args.batch_size]
         enc = tok([build_prompt(tok, x["prompt"]) for x in batch], return_tensors="pt",
                   padding=True).to(model.device)
+        sync()
+        t0 = time.perf_counter()  # time generation only, not tokenizing or scoring
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False,
                                  pad_token_id=tok.pad_token_id)
+        sync()
+        gen_time += time.perf_counter() - t0
         new = out[:, enc["input_ids"].shape[1]:]
         for x, ids in zip(batch, new):
             n = int((ids != tok.pad_token_id).sum())
@@ -79,13 +93,18 @@ def main():
             rows.append({**x, "model_answer": answer, "gen_tokens": n,
                          **score(answer, x["answer"])})
         print(f"{min(i + args.batch_size, len(items))}/{len(items)}", flush=True)
-    elapsed = time.perf_counter() - t0
 
     with open(args.out + ".jsonl", "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     summary = {"model": args.model, "adapter": args.adapter, "data": os.path.basename(args.data),
-               **summarize(rows), "gen_tokens_per_s": round(gen_tokens / elapsed, 1),
+               "quant": args.quant, "batch_size": args.batch_size, **summarize(rows),
+               "truncated_pct": round(100 * sum(r["gen_tokens"] >= args.max_new_tokens for r in rows)
+                                      / len(rows), 1),
+               "gen_tokens_per_s": round(gen_tokens / gen_time, 1),
+               "sec_per_batch": round(gen_time / -(-len(rows) // args.batch_size), 2),
+               "weights_gb": round(weights_gb, 2),
+               "peak_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2) if use_cuda else 0.0,
                "device": torch.cuda.get_device_name() if use_cuda else "cpu"}
     with open(args.out + ".summary.json", "w") as f:
         json.dump(summary, f, ensure_ascii=False, indent=1)

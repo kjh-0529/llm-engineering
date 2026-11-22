@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done and evaluated; inference optimization next.
+Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done, evaluated and [published](https://huggingface.co/kjh0529/qwen3-1.7b-ko-tech-qlora); inference optimization in progress.
 
 ## Choices
 
@@ -135,6 +135,28 @@ What it shows, checked against the prediction written before training:
 
 Not measured yet: how many answers hit the 512-token limit (longer answers make this more likely; the audit flagged that it is not tracked), and whether a repetition penalty or shorter training answers would curb the verbosity.
 
+## Inference optimization
+
+Same T4, same 200 test questions, greedy decoding, so speed, memory and quality are measured together. Each run is one `eval/evaluate.py` call:
+
+| Run | How | Question |
+|---|---|---|
+| Adapter, unmerged | `--adapter runs/qlora` | the starting point |
+| Merged, float16 | [`merge_adapter.py`](merge_adapter.py), then `--model runs/merged` | what does the LoRA side path cost? |
+| Merged, 8-bit | `--model runs/merged --quant 8bit` (bitsandbytes LLM.int8) | memory vs. speed vs. quality |
+| Merged, 4-bit | `--model runs/merged --quant 4bit` (NF4) | the same, one step further |
+
+Each runs twice: batch 16 over all 200 questions (throughput and quality) and batch 1 over 20 questions (latency of a single request).
+
+What `evaluate.py` now records, beyond the quality metrics: tokens/s timed around `generate()` only (earlier numbers also included tokenizing and scoring), seconds per batch, GPU memory for the weights and at peak, and the share of answers cut off at the 512-token limit. Merging was checked on CPU: the merged model gives exactly the same greedy answers as base plus adapter.
+
+Predictions, written before measuring:
+
+- **Merging** removes the extra LoRA matrix multiplies in every layer, so it should recover most of the 12% speed lost to the adapter, with identical quality.
+- **8-bit** should roughly halve weight memory (about 3.4 → 1.9 GB) but run slower: LLM.int8 handles outlier features in float16, which costs time.
+- **4-bit** should cut weight memory to about a third. At batch 1, where decoding is limited by reading weights from memory, it may come close to float16; at batch 16 the dequantization overhead should make it slower. A small quality drop is possible.
+- vLLM (continuous batching, paged KV cache) comes next, in a separate run, since installing it changes PyTorch.
+
 ## Plan
 
 1. ~~Data and evaluation~~
@@ -157,4 +179,6 @@ pip uninstall -y torchao                # Kaggle's torchao 0.10 makes recent PEF
 python eval/evaluate.py --adapter runs/qlora --data data/test.jsonl --out results/qlora_test
 python eval/evaluate.py --adapter runs/qlora --data data/hpc_eval_ko.jsonl --out results/qlora_hpc
 python upload_adapter.py                # needs HF_TOKEN; uploads the adapter with MODEL_CARD.md
+python merge_adapter.py                 # writes runs/merged
+python eval/evaluate.py --model runs/merged --quant 4bit --data data/test.jsonl --out results/inf_merged_4bit
 ```
