@@ -86,7 +86,7 @@ What this means for the plan:
 | Base weights | 4-bit NF4, double quantization, frozen | fits the 16 GB T4 with room for activations |
 | Compute | float16, gradient checkpointing | the T4 has no bfloat16 |
 | LoRA | r 16, alpha 32, dropout 0.05, on q/k/v/o and gate/up/down projections | standard QLoRA setup; about 1.7% of parameters trainable |
-| Batch | 4 per step x 4 accumulation = 16 sequences, max 1,024 tokens | |
+| Batch | 2 per step x 8 accumulation = 16 sequences, max 1,024 tokens | batch 4 ran out of memory on the T4: with a 152k-token vocabulary, the logits for 4 x 1,024 tokens need about 4 GiB more during the loss |
 | Schedule | 2 epochs, learning rate 2e-4, cosine, 3% warm-up, paged 8-bit AdamW | |
 | Loss | answer tokens only | the model learns to answer, not to repeat prompts |
 

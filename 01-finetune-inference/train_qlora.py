@@ -86,8 +86,10 @@ def main():
         model=model,
         args=TrainingArguments(
             output_dir=args.out, num_train_epochs=args.epochs, max_steps=args.max_steps,
-            per_device_train_batch_size=4, per_device_eval_batch_size=4,
-            gradient_accumulation_steps=4, learning_rate=2e-4, lr_scheduler_type="cosine",
+            # 2 x 8 = 16 sequences per update. Batch 4 ran out of memory on the T4: the loss
+            # materializes batch x 1,024 tokens x 152k-word vocabulary logits (4 GiB extra).
+            per_device_train_batch_size=2, per_device_eval_batch_size=2,
+            gradient_accumulation_steps=8, learning_rate=2e-4, lr_scheduler_type="cosine",
             warmup_steps=max(1, int(0.03 * steps)), logging_steps=10, eval_strategy="steps", eval_steps=100,
             save_strategy="no", fp16=cuda, gradient_checkpointing=cuda,
             optim="paged_adamw_8bit" if cuda else "adamw_torch",
