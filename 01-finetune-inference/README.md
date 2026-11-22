@@ -112,6 +112,7 @@ python eval/evaluate.py --model Qwen/Qwen3-1.7B --data data/test.jsonl --out res
 python eval/evaluate.py --model Qwen/Qwen3-1.7B --data data/hpc_eval_ko.jsonl --out results/base_hpc
 pip install bitsandbytes                # not preinstalled on Kaggle
 python train_qlora.py                   # writes the adapter to runs/qlora
+pip uninstall -y torchao                # Kaggle's torchao 0.10 makes recent PEFT fail when loading the adapter
 python eval/evaluate.py --adapter runs/qlora --data data/test.jsonl --out results/qlora_test
 python eval/evaluate.py --adapter runs/qlora --data data/hpc_eval_ko.jsonl --out results/qlora_hpc
 ```
