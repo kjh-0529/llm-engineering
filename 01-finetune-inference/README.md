@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning next.
+Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA training script ready; training run next.
 
 ## Choices
 
@@ -77,6 +77,23 @@ What this means for the plan:
 - That gap is exactly what retrieval is for: project 2 (RAG over HPC documentation) is the fix for wrong facts, and this baseline is the evidence for needing it.
 - chrF alone would have hidden all of this: a fluent wrong answer and a fluent right one score about the same. Every comparison below keeps a sample of answers next to the numbers.
 
+## QLoRA fine-tuning
+
+[`train_qlora.py`](train_qlora.py) uses plain transformers + PEFT + bitsandbytes (no extra training framework).
+
+| Setting | Value | Why |
+|---|---|---|
+| Base weights | 4-bit NF4, double quantization, frozen | fits the 16 GB T4 with room for activations |
+| Compute | float16, gradient checkpointing | the T4 has no bfloat16 |
+| LoRA | r 16, alpha 32, dropout 0.05, on q/k/v/o and gate/up/down projections | standard QLoRA setup; about 1.7% of parameters trainable |
+| Batch | 4 per step x 4 accumulation = 16 sequences, max 1,024 tokens | |
+| Schedule | 2 epochs, learning rate 2e-4, cosine, 3% warm-up, paged 8-bit AdamW | |
+| Loss | answer tokens only | the model learns to answer, not to repeat prompts |
+
+Prompts are built with the evaluation script's own `build_prompt` (same system prompt, Qwen3 thinking mode off), so training and evaluation see exactly the same format. Prompt and answer are tokenized separately, so the loss mask boundary is exact, and the script asserts on the first example that the unmasked labels decode to its answer.
+
+Checked before the GPU run: a CPU smoke test with Qwen3-0.6B (2 steps, 8 examples) trained, evaluated, saved the adapter, and `eval/evaluate.py --adapter` loaded it. Two arguments used in older tutorials, `warmup_ratio` and `group_by_length`, no longer exist in transformers 5.x; the script computes warm-up steps itself so it runs on both 4.x and 5.x.
+
 ## Plan
 
 1. ~~Data and evaluation~~
@@ -93,4 +110,7 @@ pip install -r requirements.txt
 python data/prepare_data.py            # optional: the splits are already committed
 python eval/evaluate.py --model Qwen/Qwen3-1.7B --data data/test.jsonl --out results/base_test
 python eval/evaluate.py --model Qwen/Qwen3-1.7B --data data/hpc_eval_ko.jsonl --out results/base_hpc
+python train_qlora.py                  # writes the adapter to runs/qlora
+python eval/evaluate.py --adapter runs/qlora --data data/test.jsonl --out results/qlora_test
+python eval/evaluate.py --adapter runs/qlora --data data/hpc_eval_ko.jsonl --out results/qlora_hpc
 ```
