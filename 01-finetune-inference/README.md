@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA training script ready; training run next.
+Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done and evaluated; inference optimization next.
 
 ## Choices
 
@@ -94,14 +94,55 @@ Prompts are built with the evaluation script's own `build_prompt` (same system p
 
 Checked before the GPU run: a CPU smoke test with Qwen3-0.6B (2 steps, 8 examples) trained, evaluated, saved the adapter, and `eval/evaluate.py --adapter` loaded it. Two arguments used in older tutorials, `warmup_ratio` and `group_by_length`, no longer exist in transformers 5.x; the script computes warm-up steps itself so it runs on both 4.x and 5.x.
 
+## Results after fine-tuning
+
+Training on the T4: 234 updates (2 epochs) in 1 h 26 min. Validation loss fell from 2.057 (step 100) to 2.003 (step 200) and 2.001 (end) and never rose, so there was no overfitting; a third epoch would add little. Loss curve: [`results/qlora_training_loss.csv`](results/qlora_training_loss.csv).
+
+**Technical test set (200 questions)**
+
+| Metric | Base | Fine-tuned | Change |
+|---|---|---|---|
+| Korean answers (of 178 with a Korean reference) | 84.8% | **93.3%** | +8.5 points |
+| chrF | 22.2 | **27.9** | +26% |
+| Code OK (of 65) | 76.9% | **81.5%** | +4.6 points |
+| Mean answer length | 302 chars | 404 chars | +34% |
+| Tokens/s (unmerged adapter) | 90 | 79 | −12% |
+
+**HPC set (30 questions)**
+
+| Metric | Base | Fine-tuned |
+|---|---|---|
+| Korean answers | 100% | 100% |
+| chrF | 18.2 | **12.9** |
+| Mean answer length | 360 chars | **614 chars** |
+
+**Same five HPC questions as the baseline**
+
+| Question | Base | Fine-tuned |
+|---|---|---|
+| Request 2 GPUs | `--gres=gpu:2`, correct | correct, plus a redundant explanation |
+| Why is a job PENDING? | `squeue`, `scontrol`, then noise | invents "reservation" problems; no longer mentions `squeue` |
+| sbatch vs srun | vague | vague, and repeats the same sentence twice |
+| Cancel a job | `scontrol cancel job` (wrong) | `scontrol cancel` (still wrong), now with invented details ("waits ... default 10 seconds") |
+| OUT_OF_MEMORY | `kill <job_id>` (wrong) | generic steps, no concrete command |
+
+What it shows, checked against the prediction written before training:
+
+- **Language and format improved, as predicted.** More Korean answers, closer to the reference style, more intact code blocks on the in-distribution test set.
+- **HPC facts did not improve, as predicted**, and the answers got worse in a way I had not predicted: longer and more elaborate when wrong. The training answers are long, explanatory Alpaca-style texts, so the model learned to write more; where it has no knowledge, it now fills the extra length with plausible invented detail. chrF on the HPC set falls accordingly.
+- **Lesson:** fine-tuning on general data changes how a model answers, not what it knows. Wrong facts need a source of facts, which is what retrieval (project 2) adds.
+- The speed drop comes from the unmerged LoRA adapter and longer answers; the inference step addresses it.
+
+Not measured yet: how many answers hit the 512-token limit (longer answers make this more likely; the audit flagged that it is not tracked), and whether a repetition penalty or shorter training answers would curb the verbosity.
+
 ## Plan
 
 1. ~~Data and evaluation~~
 2. ~~Baseline: score Qwen3-1.7B as it is~~
-3. QLoRA fine-tuning (4-bit base, float16 compute on the T4)
-4. Before/after comparison, with failure analysis
+3. ~~QLoRA fine-tuning (4-bit base, float16 compute on the T4)~~
+4. ~~Before/after comparison, with failure analysis~~
 5. Inference optimization: float16 vs 8-bit vs 4-bit, Hugging Face generate vs vLLM; latency, throughput, memory
-6. Model card
+6. Model card: [`MODEL_CARD.md`](MODEL_CARD.md), uploaded with [`upload_adapter.py`](upload_adapter.py)
 
 ## Run
 
@@ -115,4 +156,5 @@ python train_qlora.py                   # writes the adapter to runs/qlora
 pip uninstall -y torchao                # Kaggle's torchao 0.10 makes recent PEFT fail when loading the adapter
 python eval/evaluate.py --adapter runs/qlora --data data/test.jsonl --out results/qlora_test
 python eval/evaluate.py --adapter runs/qlora --data data/hpc_eval_ko.jsonl --out results/qlora_hpc
+python upload_adapter.py                # needs HF_TOKEN; uploads the adapter with MODEL_CARD.md
 ```
