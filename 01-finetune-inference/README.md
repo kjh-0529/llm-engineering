@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done, evaluated and [published](https://huggingface.co/kjh0529/qwen3-1.7b-ko-tech-qlora); inference optimization in progress.
+Status: data, evaluation and baseline done (re-measured after an audit fixed the data and the Korean metric); QLoRA fine-tuning done, evaluated and [published](https://huggingface.co/kjh0529/qwen3-1.7b-ko-tech-qlora); inference optimization measured on the T4 (vLLM next).
 
 ## Choices
 
@@ -157,13 +157,55 @@ Predictions, written before measuring:
 - **4-bit** should cut weight memory to about a third. At batch 1, where decoding is limited by reading weights from memory, it may come close to float16; at batch 16 the dequantization overhead should make it slower. A small quality drop is possible.
 - vLLM (continuous batching, paged KV cache) comes next, in a separate run, since installing it changes PyTorch.
 
+### Results
+
+Tesla T4, float16 compute. Raw values: [`results/inference_t4.csv`](results/inference_t4.csv).
+
+**Throughput: batch 16, all 200 test questions**
+
+| Run | Tokens/s | Weights | Peak memory | Korean answers | chrF | Code OK | Cut off at 512 |
+|---|---|---|---|---|---|---|---|
+| Adapter, unmerged | 79.1 | 3.51 GB | 4.80 GB | 93.3% | 27.9 | 81.5% | 13.5% |
+| **Merged, float16** | **123.8** | 3.44 GB | 4.73 GB | 93.8% | 28.0 | 84.6% | 14.0% |
+| Merged, 8-bit | 33.5 | 2.03 GB | 3.33 GB | 94.4% | 28.0 | 83.1% | 15.5% |
+| **Merged, 4-bit** | 106.4 | **1.42 GB** | **2.71 GB** | 98.3% | 28.8 | 84.6% | 16.0% |
+
+**Latency: batch 1, 20 questions**
+
+| Run | Tokens/s | Seconds per answer | Peak memory |
+|---|---|---|---|
+| Adapter, unmerged | 11.9 | 19.8 | 4.37 GB |
+| **Merged, float16** | **21.4** | **11.7** | 3.56 GB |
+| Merged, 8-bit | 5.9 | 34.5 | 2.16 GB |
+| Merged, 4-bit | 15.9 | 14.6 | 1.53 GB |
+
+Checked against the predictions:
+
+| Prediction | Result | |
+|---|---|---|
+| Merging recovers the ~12% lost to the adapter | **+57% at batch 16, +80% at batch 1** | far more than predicted |
+| 8-bit halves weight memory and runs slower | −41% memory, **3.7x slower** | right direction, slower than expected |
+| 4-bit cuts weights to about a third; slower at batch 16 | −59% memory; 86% of float16 speed at batch 16 | right |
+| 4-bit comes close to float16 at batch 1 | **74%** of float16 speed | wrong |
+
+What it shows:
+
+- **The unmerged adapter was the biggest cost.** It adds two small matrix multiplies to each of 7 projections in all 28 layers, about 400 extra small GPU kernels per generated token. Merging folds them into the base weights at no quality cost (identical answers on the CPU check; chrF 27.9 vs. 28.0 here, from float16 rounding of the merged weights). The earlier "12% slower than the base model" compared timings taken a different way and understated the cost.
+- **Batch-1 decoding here is limited by overhead, not memory bandwidth.** At 21 tokens/s, float16 reads its 3.4 GB of weights about 21 times a second, roughly 75 GB/s, a quarter of the T4's 320 GB/s. So reading 4-bit weights saves little, while unpacking them costs time: 4-bit is slower, not close. The bottleneck is the thousands of small kernel launches and Python overhead per token in `generate()`. CUDA graphs and a dedicated serving engine (vLLM, next) target exactly this.
+- **Batching is the cheapest speed-up.** Float16 throughput rises 5.8x from batch 1 to batch 16 (21 → 124 tokens/s), at the cost of longer waits per request.
+- **8-bit is not worth it on a T4.** LLM.int8 handles outlier features separately in float16; on this card it is 3.7x slower than float16 for 41% less memory, while 4-bit saves more memory and is 3x faster than 8-bit.
+- **No quality loss from quantization was detected.** 4-bit scored as high as or higher than float16 (Korean answers 98.3% vs. 93.8%). I do not have an explanation for the higher Korean rate and would not claim 4-bit is better: quantization changes greedy decoding paths, and the answers have not been compared by hand.
+- **14–16% of answers hit the 512-token limit**, in every configuration. This affects chrF and the other quality metrics alike, so it does not change the comparison, but the absolute quality numbers are measured on partly truncated answers.
+
+**Recommendation for this model on a T4:** serve the merged float16 model when memory allows (it uses under 5 GB of the 16 GB); use 4-bit when memory is tight, for 14–26% less speed and no measured quality loss; avoid 8-bit.
+
 ## Plan
 
 1. ~~Data and evaluation~~
 2. ~~Baseline: score Qwen3-1.7B as it is~~
 3. ~~QLoRA fine-tuning (4-bit base, float16 compute on the T4)~~
 4. ~~Before/after comparison, with failure analysis~~
-5. Inference optimization: float16 vs 8-bit vs 4-bit, Hugging Face generate vs vLLM; latency, throughput, memory
+5. Inference optimization: ~~float16 vs 8-bit vs 4-bit with Hugging Face generate~~; vLLM next
 6. Model card: [`MODEL_CARD.md`](MODEL_CARD.md), uploaded with [`upload_adapter.py`](upload_adapter.py)
 
 ## Run
