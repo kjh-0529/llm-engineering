@@ -1,0 +1,7 @@
+torch
+transformers>=4.51
+peft
+accelerate
+bitsandbytes
+huggingface_hub
+sacrebleu
