@@ -2,7 +2,9 @@
 
 - korean_ratio: share of Hangul among Hangul + Latin letters, outside code
   (fenced blocks and `inline code`). Technical terms in English lower it a
-  little; whole English answers drive it toward 0.
+  little; whole English answers drive it toward 0. Reported only for items
+  whose reference answer is itself Korean: a correct code-only answer has no
+  letters outside code and would otherwise count as "not Korean".
 - cjk_drift: the answer contains Chinese characters or Japanese kana outside
   code (3 or more). Small multilingual models often drift into Chinese when
   asked in Korean.
@@ -51,6 +53,7 @@ def code_ok(answer, reference):
 def score(answer, reference):
     return {
         "korean_ratio": korean_ratio(answer),
+        "ref_korean": korean_ratio(reference) >= 0.5,
         "cjk_drift": cjk_drift(answer),
         "chrf": chrf(answer, reference),
         "code_ok": code_ok(answer, reference),
@@ -61,10 +64,13 @@ def score(answer, reference):
 def summarize(rows):
     n = len(rows)
     code = [r["code_ok"] for r in rows if r["code_ok"] is not None]
+    kor = [r for r in rows if r["ref_korean"]]
+    k = len(kor) or 1
     return {
         "n": n,
-        "korean_ratio_mean": round(sum(r["korean_ratio"] for r in rows) / n, 4),
-        "korean_answers_pct": round(100 * sum(r["korean_ratio"] >= 0.5 for r in rows) / n, 1),
+        "korean_cases": len(kor),
+        "korean_ratio_mean": round(sum(r["korean_ratio"] for r in kor) / k, 4),
+        "korean_answers_pct": round(100 * sum(r["korean_ratio"] >= 0.5 for r in kor) / k, 1),
         "cjk_drift_pct": round(100 * sum(r["cjk_drift"] for r in rows) / n, 1),
         "chrf_mean": round(sum(r["chrf"] for r in rows) / n, 2),
         "code_ok_pct": round(100 * sum(code) / len(code), 1) if code else None,

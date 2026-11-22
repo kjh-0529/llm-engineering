@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: data, evaluation and baseline done; QLoRA fine-tuning next.
+Status: data and evaluation fixed after an audit (see below); baseline to be re-measured on the new split, then QLoRA fine-tuning.
 
 ## Choices
 
@@ -25,8 +25,10 @@ KULLM-v2 is a DeepL translation of Alpaca, Dolly and Vicuna. Measured on all 152
 Training on Vicuna would teach the model to write code without line breaks and to answer questions it cannot see, so it is left out. [`data/prepare_data.py`](data/prepare_data.py) then:
 
 1. keeps prompts whose **instruction** mentions a technical or programming keyword (matching the whole prompt picked up Dolly passages about TV networks and game studios, and the word "프로그램" matched "TV 프로그램"),
-2. drops answers with broken code blocks (32), inputs with code squashed onto one line (27), very short answers (4,733), very long samples (84) and duplicate prompts (302),
-3. splits the 3,305 technical samples into **200 test, 200 validation and 2,905 training**, and adds 1,000 general samples to training so the model keeps its general ability.
+2. drops answers with broken code blocks (32), inputs with code squashed onto one line (27), **code that the translator itself turned into Korean (224)**, very short answers (4,733), very long samples (84) and duplicate prompts (302),
+3. splits the 3,116 technical samples into **200 test, 200 validation and 2,716 training**, and adds 1,000 general samples to training so the model keeps its general ability.
+
+The translated-code filter came from an audit after the baseline: DeepL had translated code keywords and names, e.g. `반환 ''.join(...)` for `return`, `int(입력(...))` for `input`, `SELECT * FROM 주택에서 ...`, and code fences labelled `파이썬`. About 3.6% of the earlier training split had such answers; training on them teaches broken code. Detection is a keyword-plus-Hangul heuristic on code lines with strings and comments removed; a random sample of 8 dropped items were all real cases. [`test_fixes.py`](test_fixes.py) checks it.
 
 The processed splits are committed in [`data/`](data/) with [`stats.json`](data/stats.json). Part of the original English data was produced by GPT models; the model card will state this.
 
@@ -38,7 +40,7 @@ The processed splits are committed in [`data/`](data/) with [`stats.json`](data/
 
 | Metric | What it measures |
 |---|---|
-| Korean answers (%) | answers whose letters outside code are at least 50% Hangul (vs. Latin); small multilingual models often answer Korean questions in English |
+| Korean answers (%) | answers whose letters outside code are at least 50% Hangul (vs. Latin); small multilingual models often answer Korean questions in English. Counted only on items whose **reference** is Korean (178 of 200 test items): a correct code-only answer has no letters outside code and would otherwise count as "not Korean" |
 | CJK drift (%) | answers containing Chinese characters or Japanese kana outside code |
 | chrF | character n-gram overlap with the reference answer; character-level, so it suits Korean spacing and particles |
 | Code OK (%) | when the reference has a code block, the answer has one with intact line breaks |
@@ -51,6 +53,8 @@ A CPU smoke test with Qwen3-0.6B on two HPC questions ran end to end. It answere
 ## Baseline: Qwen3-1.7B as it is
 
 Tesla T4, float16, greedy decoding. Summaries in [`results/`](results/).
+
+> These numbers come from the first data split and the first version of the Korean metric, before both were fixed (see the data section and the metric table). They are kept for the record and will be replaced by a re-run on the new split. The qualitative findings below do not depend on either fix.
 
 | Set | Korean answers | Korean ratio | CJK drift | chrF | Code OK | Mean length | Tokens/s |
 |---|---|---|---|---|---|---|---|
@@ -69,7 +73,7 @@ The numbers look good; the answers do not. On the first five HPC questions:
 
 What this means for the plan:
 
-- **Language is not the problem.** No Chinese or Japanese drift, and 85–97% of answers are in Korean. The 15% non-Korean test answers are the first thing to look at after fine-tuning.
+- **Language is not the problem.** No Chinese or Japanese drift, and 85–97% of answers are in Korean. Most of the "15% non-Korean" turned out to be a metric bug, not a language problem: 24 of the 200 old test references are code only (e.g. a single SQL query), and a correct code-only answer scored 0 on the Korean metric. The metric now skips such items.
 - **Facts are.** The model confidently invents Slurm commands. The training data is general technical Q&A and contains almost nothing about Slurm or MPI, so **fine-tuning is not expected to fix HPC facts**; it should mainly improve Korean consistency, answer format and fit to the reference style (chrF). Written down before training, so the result can be checked against it.
 - That gap is exactly what retrieval is for: project 2 (RAG over HPC documentation) is the fix for wrong facts, and this baseline is the evidence for needing it.
 - chrF alone would have hidden all of this: a fluent wrong answer and a fluent right one score about the same. Every comparison below keeps a sample of answers next to the numbers.

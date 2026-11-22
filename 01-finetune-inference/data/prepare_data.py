@@ -13,8 +13,8 @@ So this script keeps Alpaca and Dolly only, then:
   1. keeps technical / programming prompts (keyword filter on the instruction)
   2. optionally adds a random sample of general prompts (--general)
   3. drops samples whose code lost its newlines (in answer code blocks or in a
-     code input), empty or very short answers, very long samples, and
-     duplicate prompts
+     code input) or was itself translated into Korean (`에서 ... import`),
+     empty or very short answers, very long samples, and duplicate prompts
   4. splits into train / val / test with a fixed seed
 
 Output: train.jsonl, val.jsonl, test.jsonl with {"id", "prompt", "answer",
@@ -50,6 +50,25 @@ CODE_CHARS = re.compile(r"[;{}]|==|\bdef |\bint |\breturn\b")
 def input_code_broken(text):
     """True if the input looks like source code squashed onto one line."""
     return "\n" not in text and len(text) > 60 and len(CODE_CHARS.findall(text)) >= 2
+
+
+CODE_KEYWORD = re.compile(r"\b(SELECT|FROM|WHERE|def|return|import|for|if|while|class|print|int|public|void)\b")
+HANGUL = re.compile(r"[가-힣]")
+
+
+def code_translated(text):
+    """True if translation turned code into Korean, e.g. `에서 langdetect import detect`."""
+    # shortcut: keyword + Hangul heuristic on code lines; misses translated code without
+    # these keywords. Upgrade to a parser per language if the counts matter.
+    if re.search(r"(```|\'\'\')\s*파이썬", text):
+        return True
+    lines = [l for block in CODE_BLOCK.findall(text) for l in block.split("\n")]
+    lines += [l for l in text.split("\n") if re.match(r"\s*(SELECT|INSERT|UPDATE|DELETE|CREATE)\b", l, re.I)]
+    for line in lines:
+        code = re.sub(r"(['\"]).*?\1", "", re.sub(r"(#|//).*$", "", line))  # drop comments, strings
+        if CODE_KEYWORD.search(code) and HANGUL.search(code):
+            return True
+    return False
 
 
 def main():
@@ -89,6 +108,9 @@ def main():
             continue
         if input_code_broken(r["input"].strip()):
             drops["broken_code_in_input"] += 1
+            continue
+        if code_translated(answer) or code_translated(r["input"]):
+            drops["translated_code"] += 1
             continue
         if prompt in seen:
             drops["duplicate_prompt"] += 1

@@ -3,14 +3,15 @@
  "alpaca_dolly_rows": 67011,
  "dropped": {
   "answer_too_short": 4733,
+  "translated_code": 224,
   "broken_code_in_input": 27,
   "broken_code_block": 32,
   "duplicate_prompt": 302,
   "too_long": 84
  },
- "technical_candidates": 3305,
- "train": 3905,
- "train_technical": 2905,
+ "technical_candidates": 3116,
+ "train": 3716,
+ "train_technical": 2716,
  "train_general": 1000,
  "val": 200,
  "test": 200
