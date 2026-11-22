@@ -2,7 +2,7 @@
 
 Fine-tune a small open LLM to answer Korean technical and programming questions, measure the change honestly, then make it fast on a Tesla T4.
 
-Status: step 1 (data and evaluation) done; baseline measurement next.
+Status: data, evaluation and baseline done; QLoRA fine-tuning next.
 
 ## Choices
 
@@ -48,10 +48,36 @@ No single metric is enough for free-form answers, so results are reported side b
 
 A CPU smoke test with Qwen3-0.6B on two HPC questions ran end to end. It answered the Slurm GPU question with `--gres=2` (the correct option is `--gres=gpu:2`) and repeated itself on the second, a sign the HPC set separates good and bad answers.
 
+## Baseline: Qwen3-1.7B as it is
+
+Tesla T4, float16, greedy decoding. Summaries in [`results/`](results/).
+
+| Set | Korean answers | Korean ratio | CJK drift | chrF | Code OK | Mean length | Tokens/s |
+|---|---|---|---|---|---|---|---|
+| Test (200 technical) | 85.0% | 0.81 | 0% | 21.7 | 82.5% (of 63) | 285 chars | 102 |
+| HPC (30) | 96.7% | 0.82 | 0% | 18.2 | — | 360 chars | 106 |
+
+The numbers look good; the answers do not. On the first five HPC questions:
+
+| Question | Base model answer | Verdict |
+|---|---|---|
+| Request 2 GPUs in Slurm | `#SBATCH --gres=gpu:2` | correct |
+| Why is a job PENDING? | `squeue`, `scontrol show node`, ... then trails off into "`srm.c`" | partly right; misses the REASON column, ends in noise |
+| sbatch vs srun | long generic explanation | vague |
+| Cancel a running job | `scontrol cancel job <id>` (twice) | **wrong**: the command is `scancel <id>` |
+| OUT_OF_MEMORY / oom-kill | `kill -15 <job_id>`, then `scontrol show job` | **wrong**: a job ID is not a process ID; the fix is to check `sacct` MaxRSS and raise `--mem` |
+
+What this means for the plan:
+
+- **Language is not the problem.** No Chinese or Japanese drift, and 85–97% of answers are in Korean. The 15% non-Korean test answers are the first thing to look at after fine-tuning.
+- **Facts are.** The model confidently invents Slurm commands. The training data is general technical Q&A and contains almost nothing about Slurm or MPI, so **fine-tuning is not expected to fix HPC facts**; it should mainly improve Korean consistency, answer format and fit to the reference style (chrF). Written down before training, so the result can be checked against it.
+- That gap is exactly what retrieval is for: project 2 (RAG over HPC documentation) is the fix for wrong facts, and this baseline is the evidence for needing it.
+- chrF alone would have hidden all of this: a fluent wrong answer and a fluent right one score about the same. Every comparison below keeps a sample of answers next to the numbers.
+
 ## Plan
 
 1. ~~Data and evaluation~~
-2. Baseline: score Qwen3-1.7B as it is
+2. ~~Baseline: score Qwen3-1.7B as it is~~
 3. QLoRA fine-tuning (4-bit base, float16 compute on the T4)
 4. Before/after comparison, with failure analysis
 5. Inference optimization: float16 vs 8-bit vs 4-bit, Hugging Face generate vs vLLM; latency, throughput, memory

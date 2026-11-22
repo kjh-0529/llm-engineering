@@ -1,0 +1,15 @@
+{
+ "model": "Qwen/Qwen3-1.7B",
+ "adapter": null,
+ "cjk_drift_pct": 0.0,
+ "device": "Tesla T4",
+ "data": "test.jsonl",
+ "n": 200,
+ "korean_ratio_mean": 0.8085,
+ "korean_answers_pct": 85.0,
+ "chrf_mean": 21.73,
+ "code_ok_pct": 82.5,
+ "code_cases": 63,
+ "mean_chars": 285,
+ "gen_tokens_per_s": 102.4
+}
